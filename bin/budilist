@@ -20,9 +20,19 @@ echo -e "${BOLD}${CYAN}── Активные напоминания ──${NC
 FOUND=0
 while read -r JOB REST; do
     TIME=$(echo "$REST" | awk '{$(NF-1)=""; $NF=""; print}' | sed 's/  */ /g' | sed 's/ $//')
+
+    # Сначала пробуем вытащить текст из notify-send
     MSG=$(at -c "$JOB" 2>/dev/null \
           | grep -oP 'notify-send\s+.*?\x27Будильник[^\x27]*\x27\s+\x27\K[^\x27]*' \
           | head -n1)
+
+    # Если не нашли — пробуем из Telegram (curl ... text='🔔 ...')
+    if [ -z "$MSG" ]; then
+        MSG=$(at -c "$JOB" 2>/dev/null \
+              | grep -oP "text='🔔 \K[^']*" \
+              | head -n1)
+    fi
+
     [ -z "$MSG" ] && MSG="(без описания)"
 
     JOB_TS=$(date -d "$TIME" '+%s' 2>/dev/null)

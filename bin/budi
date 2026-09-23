@@ -13,11 +13,13 @@
 #           -r 1 = одно основное + один повтор = 2 уведомления
 #    -i N   интервал между уведомлениями в секундах (по умолчанию 60)
 #    -u     urgent (уведомление не исчезает само)
+#    -tg    только Telegram (без всплывающего окна на рабочем столе)
 #
 #  Примеры:
 #    budi 19:35 2026-09-23 203 починить телефонию
 #    budi +30 позвонить маме
 #    budi +2h проверить бэкап -r 2 -i 120 -u
+#    budi +30 проверить сервер -tg
 # ============================================================
 
 LOG="$HOME/.budi.log"
@@ -31,23 +33,36 @@ log() {
 REPEATS=0          # по умолчанию без повторов
 INTERVAL=60
 URGENCY="normal"
+ONLY_TG=0
 
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        -r) REPEATS="$2"; shift 2 ;;
-        -i) INTERVAL="$2"; shift 2 ;;
-        -u) URGENCY="critical"; shift ;;
-        *)  POSITIONAL+=("$1"); shift ;;
+        -r)  REPEATS="$2"; shift 2 ;;
+        -i)  INTERVAL="$2"; shift 2 ;;
+        -u)  URGENCY="critical"; shift ;;
+        -tg) ONLY_TG=1; shift ;;
+        *)   POSITIONAL+=("$1"); shift ;;
     esac
 done
 set -- "${POSITIONAL[@]}"
 
 if [ "$#" -lt 2 ]; then
     echo "Использование: budi ЧЧ:ММ ГГГГ-ММ-ДД [ID] сообщение"
-    echo "               budi +N[h] сообщение [-r повторы] [-i интервал] [-u]"
+    echo "               budi +N[h] сообщение [-r повторы] [-i интервал] [-u] [-tg]"
     echo "Смотри budiinfo для подробностей."
     exit 1
+fi
+
+# Предупреждение, если -tg без конфига Telegram
+if [ "$ONLY_TG" -eq 1 ] && [ ! -f "$TG_CONF" ]; then
+    echo "⚠  Флаг -tg указан, но ~/.budi-telegram.conf не найден."
+    echo "   Уведомление никуда не придёт."
+fi
+
+# Предупреждение, если -u вместе с -tg (не имеет смысла)
+if [ "$ONLY_TG" -eq 1 ] && [ "$URGENCY" = "critical" ]; then
+    echo "ℹ  Флаг -u игнорируется в режиме -tg (Telegram не поддерживает urgency)."
 fi
 
 # --- Режим: абсолютное или относительное время ---
@@ -101,13 +116,14 @@ DUP=""
 for J in $(atq | awk '{print $1}'); do
     J_TIME=$(atq | grep "^$J " | awk '{print $2" "$3" "$4" "$5" "$6}')
     if [ "$J_TIME" = "$TARGET_FMT" ]; then
-        J_MSG=$(at -c "$J" 2>/dev/null | grep -oP "notify-send 'Будильник[^']*' '\K[^']*" | head -n1)
+        J_MSG=$(at -c "$J" 2>/dev/null | grep -oP 'notify-send\s+.*?\x27Будильник[^\x27]*\x27\s+\x27\K[^\x27]*' | head -n1)
+        [ -z "$J_MSG" ] && J_MSG="(без описания)"
         DUP="$DUP  • задача $J: $J_MSG"$'\n'
     fi
 done
 
 if [ -n "$DUP" ]; then
-    echo "⚠️  На это время уже есть напоминания:"
+    echo "⚠  На это время уже есть напоминания:"
     echo -n "$DUP"
     echo "   Новое всё равно будет создано."
 fi
@@ -116,12 +132,23 @@ fi
 URG_FLAG=""
 [ "$URGENCY" = "critical" ] && URG_FLAG="-u critical"
 
-CMD="notify-send $URG_FLAG 'Будильник' '$FULL_MSG'"
-i=1
-while [ "$i" -le "$REPEATS" ]; do
-    CMD="$CMD; sleep $INTERVAL; notify-send $URG_FLAG 'Будильник (повтор $i/$REPEATS)' '$FULL_MSG'"
-    i=$((i + 1))
-done
+if [ "$ONLY_TG" -eq 0 ]; then
+    # Обычный режим: рабочий стол + Telegram
+    CMD="notify-send $URG_FLAG 'Будильник' '$FULL_MSG'"
+    i=1
+    while [ "$i" -le "$REPEATS" ]; do
+        CMD="$CMD; sleep $INTERVAL; notify-send $URG_FLAG 'Будильник (повтор $i/$REPEATS)' '$FULL_MSG'"
+        i=$((i + 1))
+    done
+else
+    # Только Telegram: рабочий стол молчит, но паузы сохраняются
+    CMD="true"
+    i=1
+    while [ "$i" -le "$REPEATS" ]; do
+        CMD="$CMD; sleep $INTERVAL; true"
+        i=$((i + 1))
+    done
+fi
 
 # Telegram
 if [ -f "$TG_CONF" ]; then
@@ -135,4 +162,4 @@ fi
 # --- Планируем ---
 echo "$CMD" | at "$TIME_STR $DATE_STR" 2>&1 | tail -n1
 JOB_NUM=$(atq | tail -n1 | awk '{print $1}')
-log "Создано: job=$JOB_NUM time=$DATE_STR $TIME_STR msg='$FULL_MSG' repeats=$REPEATS interval=$INTERVAL"
+log "Создано: job=$JOB_NUM time=$DATE_STR $TIME_STR msg='$FULL_MSG' repeats=$REPEATS interval=$INTERVAL only_tg=$ONLY_TG"
