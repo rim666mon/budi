@@ -1,0 +1,138 @@
+#!/bin/bash
+
+# ============================================================
+#  budi — минималистичный будильник-напоминание для Fedora
+# ============================================================
+#  Использование:
+#    budi ЧЧ:ММ ГГГГ-ММ-ДД [ID] сообщение
+#    budi +N сообщение           (через N минут)
+#    budi +Nh сообщение          (через N часов)
+#
+#  Опции:
+#    -r N   число ПОВТОРОВ (по умолчанию 0 = без повторов)
+#           -r 1 = одно основное + один повтор = 2 уведомления
+#    -i N   интервал между уведомлениями в секундах (по умолчанию 60)
+#    -u     urgent (уведомление не исчезает само)
+#
+#  Примеры:
+#    budi 19:35 2026-09-23 203 починить телефонию
+#    budi +30 позвонить маме
+#    budi +2h проверить бэкап -r 2 -i 120 -u
+# ============================================================
+
+LOG="$HOME/.budi.log"
+TG_CONF="$HOME/.budi-telegram.conf"
+
+log() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') | $*" >> "$LOG"
+}
+
+# --- Разбор опций ---
+REPEATS=0          # по умолчанию без повторов
+INTERVAL=60
+URGENCY="normal"
+
+POSITIONAL=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -r) REPEATS="$2"; shift 2 ;;
+        -i) INTERVAL="$2"; shift 2 ;;
+        -u) URGENCY="critical"; shift ;;
+        *)  POSITIONAL+=("$1"); shift ;;
+    esac
+done
+set -- "${POSITIONAL[@]}"
+
+if [ "$#" -lt 2 ]; then
+    echo "Использование: budi ЧЧ:ММ ГГГГ-ММ-ДД [ID] сообщение"
+    echo "               budi +N[h] сообщение [-r повторы] [-i интервал] [-u]"
+    echo "Смотри budiinfo для подробностей."
+    exit 1
+fi
+
+# --- Режим: абсолютное или относительное время ---
+FIRST="$1"
+
+if [[ "$FIRST" =~ ^\+([0-9]+)(h?)$ ]]; then
+    NUM="${BASH_REMATCH[1]}"
+    UNIT="${BASH_REMATCH[2]}"
+    if [ "$UNIT" = "h" ]; then
+        MINUTES=$((NUM * 60))
+    else
+        MINUTES=$NUM
+    fi
+    TARGET_TS=$(date -d "+$MINUTES minutes" '+%s')
+    TIME_STR=$(date -d "@$TARGET_TS" '+%H:%M')
+    DATE_STR=$(date -d "@$TARGET_TS" '+%Y-%m-%d')
+    shift
+else
+    TIME_STR="$1"
+    DATE_STR="$2"
+    shift 2
+
+    TARGET_TS=$(date -d "$DATE_STR $TIME_STR" '+%s' 2>/dev/null)
+    if [ -z "$TARGET_TS" ]; then
+        echo "Ошибка: не удалось разобрать дату/время: $DATE_STR $TIME_STR"
+        exit 1
+    fi
+    if [ "$TARGET_TS" -le "$(date '+%s')" ]; then
+        echo "Предупреждение: указанное время уже прошло."
+    fi
+fi
+
+# --- Сообщение ---
+WORDS=("$@")
+if [ "${#WORDS[@]}" -gt 10 ]; then
+    echo "Ошибка: слишком много слов (${#WORDS[@]}). Максимум — 10."
+    exit 1
+fi
+
+if [[ "${WORDS[0]}" =~ ^[0-9]+$ ]] && [ "${#WORDS[@]}" -ge 2 ]; then
+    ID="${WORDS[0]}"
+    WORDS=("${WORDS[@]:1}")
+    FULL_MSG="$ID ${WORDS[*]}"
+else
+    FULL_MSG="${WORDS[*]}"
+fi
+
+# --- Проверка дубликатов по времени ---
+TARGET_FMT=$(date -d "@$TARGET_TS" '+%a %b %d %H:%M:00 %Y')
+DUP=""
+for J in $(atq | awk '{print $1}'); do
+    J_TIME=$(atq | grep "^$J " | awk '{print $2" "$3" "$4" "$5" "$6}')
+    if [ "$J_TIME" = "$TARGET_FMT" ]; then
+        J_MSG=$(at -c "$J" 2>/dev/null | grep -oP "notify-send 'Будильник[^']*' '\K[^']*" | head -n1)
+        DUP="$DUP  • задача $J: $J_MSG"$'\n'
+    fi
+done
+
+if [ -n "$DUP" ]; then
+    echo "⚠️  На это время уже есть напоминания:"
+    echo -n "$DUP"
+    echo "   Новое всё равно будет создано."
+fi
+
+# --- Формируем команду ---
+URG_FLAG=""
+[ "$URGENCY" = "critical" ] && URG_FLAG="-u critical"
+
+CMD="notify-send $URG_FLAG 'Будильник' '$FULL_MSG'"
+i=1
+while [ "$i" -le "$REPEATS" ]; do
+    CMD="$CMD; sleep $INTERVAL; notify-send $URG_FLAG 'Будильник (повтор $i/$REPEATS)' '$FULL_MSG'"
+    i=$((i + 1))
+done
+
+# Telegram
+if [ -f "$TG_CONF" ]; then
+    # shellcheck disable=SC1090
+    source "$TG_CONF"
+    if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
+        CMD="$CMD; curl -s -X POST https://api.telegram.org/bot$TG_TOKEN/sendMessage -d chat_id=$TG_CHAT -d text='🔔 $FULL_MSG' > /dev/null"
+    fi
+fi
+
+# --- Планируем ---
+echo "$CMD" | at "$TIME_STR $DATE_STR" 2>&1 | tail -n1
+JOB_NUM=$(atq | tail -n1 | awk '{print $1}')
+log "Создано: job=$JOB_NUM time=$DATE_STR $TIME_STR msg='$FULL_MSG' repeats=$REPEATS interval=$INTERVAL"

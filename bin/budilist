@@ -1,0 +1,48 @@
+#!/bin/bash
+
+# ============================================================
+#  budilist — список напоминаний budi
+# ============================================================
+
+LOG="$HOME/.budi.log"
+
+GREEN='\033[0;32m'
+YELLOW='\033[0;33m'
+RED='\033[0;31m'
+CYAN='\033[0;36m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+NOW=$(date '+%s')
+
+echo -e "${BOLD}${CYAN}── Активные напоминания ──${NC}"
+
+FOUND=0
+while read -r JOB REST; do
+    TIME=$(echo "$REST" | awk '{$(NF-1)=""; $NF=""; print}' | sed 's/  */ /g' | sed 's/ $//')
+    MSG=$(at -c "$JOB" 2>/dev/null \
+          | grep -oP 'notify-send\s+.*?\x27Будильник[^\x27]*\x27\s+\x27\K[^\x27]*' \
+          | head -n1)
+    [ -z "$MSG" ] && MSG="(без описания)"
+
+    JOB_TS=$(date -d "$TIME" '+%s' 2>/dev/null)
+
+    if [ -n "$JOB_TS" ] && [ "$JOB_TS" -le "$NOW" ]; then
+        printf "${RED}%-4s %-28s %s${NC}\n" "$JOB" "$TIME" "$MSG"
+    elif [ -n "$JOB_TS" ] && [ $((JOB_TS - NOW)) -le 300 ]; then
+        printf "${YELLOW}%-4s %-28s %s${NC}\n" "$JOB" "$TIME" "$MSG"
+    else
+        printf "${GREEN}%-4s %-28s %s${NC}\n" "$JOB" "$TIME" "$MSG"
+    fi
+    FOUND=1
+done < <(atq)
+
+[ "$FOUND" -eq 0 ] && echo "  (пусто)"
+
+if [ -f "$LOG" ]; then
+    echo
+    echo -e "${BOLD}${CYAN}── История (последние 10) ──${NC}"
+    grep -E "Создано:|Удалено:" "$LOG" | tail -n10 | while IFS= read -r line; do
+        echo "  $line"
+    done
+fi

@@ -1,0 +1,11 @@
+# Пример конфига Telegram для budi
+# Скопируйте в ~/.budi-telegram.conf и заполните своими значениями:
+#
+#   cp ~/projects/budi_project/conf/budi-telegram.conf.example ~/.budi-telegram.conf
+#   chmod 600 ~/.budi-telegram.conf
+#
+# Токен получается у @BotFather в Telegram.
+# chat_id — из https://api.telegram.org/bot<ТОКЕН>/getUpdates
+
+TG_TOKEN="123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+TG_CHAT="123456789"
