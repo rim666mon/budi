@@ -9,6 +9,14 @@
 #    19:35 2026-09-23 203 починить телефонию
 #    +2h бэкап -r 2 -i 120 -u
 #
+#  Команды:
+#    /start, /help — помощь
+#    /list         — активные напоминания
+#    /info         — полная справка
+#    /log          — последние 10 записей лога
+#    /del N        — удалить задачу N
+#    /ping         — проверка связи
+#
 #  Работает через long polling getUpdates.
 #  Игнорирует сообщения не от вашего TG_CHAT.
 # ============================================================
@@ -45,7 +53,7 @@ send() {
 }
 
 echo "budiwatch запущен. Ожидаю сообщения..."
-send "🤖 budiwatch запущен. Пишите задачи в формате budi."
+send "🤖 budiwatch запущен. Пишите задачи в формате budi. /help — помощь."
 
 TMP=$(mktemp)
 trap 'rm -f "$TMP" "$TMP.parsed"' EXIT
@@ -75,9 +83,59 @@ PYEOF
         fi
 
         [ -z "$TEXT" ] && continue
+
         case "$TEXT" in
             /start|/help)
-                send "ℹ Формат: +30 текст | 19:35 2026-09-23 текст | +2h текст -r 2 -i 120"
+                send "ℹ budi — команды:
+
+📌 Создать:
+  +30 текст            через 30 минут
+  +2h текст            через 2 часа
+  19:35 2026-09-23 текст   на конкретное время
+
+⚙️ Опции:
+  -r N   повторы
+  -i N   интервал в секундах
+  -u     urgent
+  -tg    только в Telegram
+
+🔧 Команды:
+  /list    активные напоминания
+  /info    полная справка
+  /log     последние 10 записей лога
+  /del N   удалить задачу N
+  /ping    проверка связи"
+                continue
+                ;;
+
+            /list)
+                LIST_OUTPUT=$(budilist 2>&1 | sed 's/\x1b\[[0-9;]*m//g')
+                send "$LIST_OUTPUT"
+                continue
+                ;;
+
+            /info)
+                INFO_OUTPUT=$(budiinfo 2>&1)
+                send "$INFO_OUTPUT"
+                continue
+                ;;
+
+            /log)
+                LOG_OUTPUT=$(tail -n 10 "$LOG" 2>&1)
+                [ -z "$LOG_OUTPUT" ] && LOG_OUTPUT="(лог пуст)"
+                send "$LOG_OUTPUT"
+                continue
+                ;;
+
+            /del\ *)
+                JOB="${TEXT#/del }"
+                DEL_OUTPUT=$(budidel "$JOB" 2>&1)
+                send "$DEL_OUTPUT"
+                continue
+                ;;
+
+            /ping)
+                send "🏓 pong ($(date '+%H:%M:%S'))"
                 continue
                 ;;
         esac
