@@ -31,6 +31,14 @@ log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') | $*" >> "$LOG"
 }
 
+# --- Проверка atd ---
+check_atd() {
+    if ! systemctl is-active --quiet atd; then
+        echo "⚠  Демон atd не запущен. Задача создастся, но не выполнится."
+        echo "   Запустите: sudo systemctl start atd"
+    fi
+}
+
 # --- Разбор опций ---
 REPEATS=0          # по умолчанию без повторов
 INTERVAL=60
@@ -57,6 +65,9 @@ if [ "$#" -lt 2 ]; then
     echo "Смотри budiinfo для подробностей."
     exit 1
 fi
+
+# Проверяем atd
+check_atd
 
 # Конфликт -tg и -pc
 if [ "$ONLY_TG" -eq 1 ] && [ "$ONLY_PC" -eq 1 ]; then
@@ -143,7 +154,6 @@ URG_FLAG=""
 [ "$URGENCY" = "critical" ] && URG_FLAG="-u critical"
 
 if [ "$ONLY_TG" -eq 0 ]; then
-    # Рабочий стол (обычный режим или -pc)
     CMD="notify-send $URG_FLAG 'Будильник' '$FULL_MSG'"
     i=1
     while [ "$i" -le "$REPEATS" ]; do
@@ -151,7 +161,6 @@ if [ "$ONLY_TG" -eq 0 ]; then
         i=$((i + 1))
     done
 else
-    # Только Telegram: рабочий стол молчит, но паузы сохраняются
     CMD="true"
     i=1
     while [ "$i" -le "$REPEATS" ]; do
