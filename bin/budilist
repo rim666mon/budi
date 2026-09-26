@@ -23,6 +23,9 @@ echo
 echo -e "${BOLD}${CYAN}── Активные напоминания ──${NC}"
 
 FOUND=0
+COUNT=0
+NEAREST_TS=""
+
 while read -r JOB REST; do
     TIME=$(echo "$REST" | awk '{$(NF-1)=""; $NF=""; print}' | sed 's/  */ /g' | sed 's/ $//')
 
@@ -48,9 +51,34 @@ while read -r JOB REST; do
         printf "${GREEN}%-4s %-28s %s${NC}\n" "$JOB" "$TIME" "$MSG"
     fi
     FOUND=1
+    COUNT=$((COUNT + 1))
+
+    # Обновляем ближайшее будущее
+    if [ -n "$JOB_TS" ] && [ "$JOB_TS" -gt "$NOW" ]; then
+        if [ -z "$NEAREST_TS" ] || [ "$JOB_TS" -lt "$NEAREST_TS" ]; then
+            NEAREST_TS="$JOB_TS"
+        fi
+    fi
 done < <(atq)
 
 [ "$FOUND" -eq 0 ] && echo "  (пусто)"
+
+# --- Сводка ---
+if [ "$COUNT" -gt 0 ] && [ -n "$NEAREST_TS" ]; then
+    DIFF=$((NEAREST_TS - NOW))
+    HOURS=$((DIFF / 3600))
+    MINS=$(( (DIFF % 3600) / 60 ))
+
+    if [ "$HOURS" -gt 0 ]; then
+        NEAREST_STR="${HOURS}ч ${MINS}м"
+    else
+        NEAREST_STR="${MINS}м"
+    fi
+
+    echo
+    echo -e "${BOLD}${CYAN}── Итого ──${NC}"
+    echo -e "  Всего активных: ${BOLD}${COUNT}${NC}. Ближайшее: ${GREEN}через ${NEAREST_STR}${NC}."
+fi
 
 if [ -f "$LOG" ]; then
     echo
