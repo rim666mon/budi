@@ -14,12 +14,14 @@
 #    -i N   интервал между уведомлениями в секундах (по умолчанию 60)
 #    -u     urgent (уведомление не исчезает само)
 #    -tg    только Telegram (без всплывающего окна на рабочем столе)
+#    -pc    только рабочий стол (без Telegram)
 #
 #  Примеры:
 #    budi 19:35 2026-09-23 203 починить телефонию
 #    budi +30 позвонить маме
 #    budi +2h проверить бэкап -r 2 -i 120 -u
 #    budi +30 проверить сервер -tg
+#    budi +30 попить воды -pc -u
 # ============================================================
 
 LOG="$HOME/.budi.log"
@@ -34,6 +36,7 @@ REPEATS=0          # по умолчанию без повторов
 INTERVAL=60
 URGENCY="normal"
 ONLY_TG=0
+ONLY_PC=0
 
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
@@ -42,6 +45,7 @@ while [ "$#" -gt 0 ]; do
         -i)  INTERVAL="$2"; shift 2 ;;
         -u)  URGENCY="critical"; shift ;;
         -tg) ONLY_TG=1; shift ;;
+        -pc) ONLY_PC=1; shift ;;
         *)   POSITIONAL+=("$1"); shift ;;
     esac
 done
@@ -49,8 +53,14 @@ set -- "${POSITIONAL[@]}"
 
 if [ "$#" -lt 2 ]; then
     echo "Использование: budi ЧЧ:ММ ГГГГ-ММ-ДД [ID] сообщение"
-    echo "               budi +N[h] сообщение [-r повторы] [-i интервал] [-u] [-tg]"
+    echo "               budi +N[h] сообщение [-r повторы] [-i интервал] [-u] [-tg] [-pc]"
     echo "Смотри budiinfo для подробностей."
+    exit 1
+fi
+
+# Конфликт -tg и -pc
+if [ "$ONLY_TG" -eq 1 ] && [ "$ONLY_PC" -eq 1 ]; then
+    echo "Ошибка: нельзя одновременно указать -tg и -pc."
     exit 1
 fi
 
@@ -133,7 +143,7 @@ URG_FLAG=""
 [ "$URGENCY" = "critical" ] && URG_FLAG="-u critical"
 
 if [ "$ONLY_TG" -eq 0 ]; then
-    # Обычный режим: рабочий стол + Telegram
+    # Рабочий стол (обычный режим или -pc)
     CMD="notify-send $URG_FLAG 'Будильник' '$FULL_MSG'"
     i=1
     while [ "$i" -le "$REPEATS" ]; do
@@ -150,8 +160,8 @@ else
     done
 fi
 
-# Telegram
-if [ -f "$TG_CONF" ]; then
+# Telegram (если не -pc)
+if [ "$ONLY_PC" -eq 0 ] && [ -f "$TG_CONF" ]; then
     # shellcheck disable=SC1090
     source "$TG_CONF"
     if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
@@ -162,4 +172,4 @@ fi
 # --- Планируем ---
 echo "$CMD" | at "$TIME_STR $DATE_STR" 2>&1 | tail -n1
 JOB_NUM=$(atq | tail -n1 | awk '{print $1}')
-log "Создано: job=$JOB_NUM time=$DATE_STR $TIME_STR msg='$FULL_MSG' repeats=$REPEATS interval=$INTERVAL only_tg=$ONLY_TG"
+log "Создано: job=$JOB_NUM time=$DATE_STR $TIME_STR msg='$FULL_MSG' repeats=$REPEATS interval=$INTERVAL only_tg=$ONLY_TG only_pc=$ONLY_PC"
