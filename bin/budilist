@@ -52,7 +52,7 @@ done < <(atq)
 if [ -f "$LOG" ]; then
     echo
     echo -e "${BOLD}${CYAN}── История (последние 10) ──${NC}"
-    grep -E "Создано:|Удалено:" "$LOG" | tail -n10 | while IFS= read -r line; do
+    grep -E "Создано:|Удалено:" "$LOG" | tail -n10 | tac | while IFS= read -r line; do
         echo "  $line"
     done
 fi
