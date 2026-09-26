@@ -15,18 +15,21 @@ NC='\033[0m'
 
 NOW=$(date '+%s')
 
+# --- Заголовок с датой ---
+TODAY_STR=$(date '+%d %B, %H:%M (%A)')
+echo -e "${BOLD}${CYAN}📅 Сегодня: ${TODAY_STR}${NC}"
+echo
+
 echo -e "${BOLD}${CYAN}── Активные напоминания ──${NC}"
 
 FOUND=0
 while read -r JOB REST; do
     TIME=$(echo "$REST" | awk '{$(NF-1)=""; $NF=""; print}' | sed 's/  */ /g' | sed 's/ $//')
 
-    # Сначала пробуем вытащить текст из notify-send
     MSG=$(at -c "$JOB" 2>/dev/null \
           | grep -oP 'notify-send\s+.*?\x27Будильник[^\x27]*\x27\s+\x27\K[^\x27]*' \
           | head -n1)
 
-    # Если не нашли — пробуем из Telegram (curl ... text='🔔 ...')
     if [ -z "$MSG" ]; then
         MSG=$(at -c "$JOB" 2>/dev/null \
               | grep -oP "text='🔔 \K[^']*" \
