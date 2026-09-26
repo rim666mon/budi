@@ -39,6 +39,16 @@ fi
 
 API="https://api.telegram.org/bot$TG_TOKEN"
 
+# --- Graceful shutdown ---
+TMP=$(mktemp)
+shutdown() {
+    echo "Получен сигнал остановки, завершаюсь..."
+    pkill -P $$ curl 2>/dev/null
+    rm -f "$TMP" "$TMP.parsed"
+    exit 0
+}
+trap shutdown SIGTERM SIGINT
+
 curl -s "$API/deleteWebhook?drop_pending_updates=false" > /dev/null
 
 START_OFFSET=$(curl -s "$API/getUpdates?offset=-1" \
@@ -47,7 +57,7 @@ START_OFFSET=$(curl -s "$API/getUpdates?offset=-1" \
 OFFSET=$((START_OFFSET + 1))
 
 send() {
-    curl -s -X POST "$API/sendMessage" \
+    curl -s --max-time 15 -X POST "$API/sendMessage" \
         -d chat_id="$TG_CHAT" \
         --data-urlencode "text=$1" > /dev/null
 }
@@ -55,11 +65,37 @@ send() {
 echo "budiwatch запущен. Ожидаю сообщения..."
 send "🤖 budiwatch запущен. Пишите задачи в формате budi. /help — помощь."
 
-TMP=$(mktemp)
-trap 'rm -f "$TMP" "$TMP.parsed"' EXIT
+ERRORS=0
+MAX_ERRORS=5
 
 while true; do
-    curl -s "$API/getUpdates?offset=$OFFSET&timeout=25" > "$TMP"
+    curl -s --max-time 35 "$API/getUpdates?offset=$OFFSET&timeout=25" > "$TMP"
+
+    # Проверка: ответ не пустой
+    if [ ! -s "$TMP" ]; then
+        ERRORS=$((ERRORS + 1))
+        echo "⚠  Пустой ответ от Telegram ($ERRORS/$MAX_ERRORS). Жду 10 сек..."
+        if [ "$ERRORS" -ge "$MAX_ERRORS" ]; then
+            echo "❌ $MAX_ERRORS неудачных циклов подряд. Проверьте интернет и токен."
+            ERRORS=0
+        fi
+        sleep 10
+        continue
+    fi
+
+    # Проверка: ответ — валидный JSON с "ok":true
+    if ! grep -q '"ok":true' "$TMP"; then
+        ERRORS=$((ERRORS + 1))
+        echo "⚠  Telegram вернул ошибку ($ERRORS/$MAX_ERRORS):"
+        head -c 200 "$TMP"
+        echo
+        sleep 10
+        continue
+    fi
+
+    # Сброс счётчика ошибок при успехе
+    [ "$ERRORS" -gt 0 ] && echo "✅ Связь восстановлена после $ERRORS ошибок."
+    ERRORS=0
 
     python3 - "$TMP" > "$TMP.parsed" <<'PYEOF'
 import sys, json
@@ -98,6 +134,7 @@ PYEOF
   -i N   интервал в секундах
   -u     urgent
   -tg    только в Telegram
+  -pc    только на рабочем столе
 
 🔧 Команды:
   /list    активные напоминания
