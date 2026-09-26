@@ -1,3 +1,8 @@
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/rim666mon/budi?color=green&label=release)](https://github.com/rim666mon/budi/releases)
+[![Shell](https://img.shields.io/badge/shell-bash-4EAA25?logo=gnubash&logoColor=white)](https://www.gnu.org/software/bash/)
+[![Made for Fedora](https://img.shields.io/badge/made%20for-Fedora-51A2DA?logo=fedora&logoColor=white)](https://fedoraproject.org/)
+
 # 🔔 budi
 
 **Минималистичный будильник-напоминание для Fedora на базе `at` + `notify-send` + Telegram.**
