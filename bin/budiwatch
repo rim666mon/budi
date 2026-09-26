@@ -1,0 +1,101 @@
+#!/bin/bash
+
+# ============================================================
+#  budiwatch — Telegram → budi
+#  Читает сообщения боту и создаёт через них напоминания budi.
+# ============================================================
+#  Формат сообщения:
+#    +30 позвонить маме
+#    19:35 2026-09-23 203 починить телефонию
+#    +2h бэкап -r 2 -i 120 -u
+#
+#  Работает через long polling getUpdates.
+#  Игнорирует сообщения не от вашего TG_CHAT.
+# ============================================================
+
+TG_CONF="$HOME/.budi-telegram.conf"
+LOG="$HOME/.budi.log"
+
+if [ ! -f "$TG_CONF" ]; then
+    echo "Не найден $TG_CONF"
+    exit 1
+fi
+
+# shellcheck disable=SC1090
+source "$TG_CONF"
+
+if [ -z "$TG_TOKEN" ] || [ -z "$TG_CHAT" ]; then
+    echo "TG_TOKEN или TG_CHAT не заданы в $TG_CONF"
+    exit 1
+fi
+
+API="https://api.telegram.org/bot$TG_TOKEN"
+
+curl -s "$API/deleteWebhook?drop_pending_updates=false" > /dev/null
+
+START_OFFSET=$(curl -s "$API/getUpdates?offset=-1" \
+               | grep -oP '"update_id":\K[0-9]+' | tail -n1)
+[ -z "$START_OFFSET" ] && START_OFFSET=0
+OFFSET=$((START_OFFSET + 1))
+
+send() {
+    curl -s -X POST "$API/sendMessage" \
+        -d chat_id="$TG_CHAT" \
+        --data-urlencode "text=$1" > /dev/null
+}
+
+echo "budiwatch запущен. Ожидаю сообщения..."
+send "🤖 budiwatch запущен. Пишите задачи в формате budi."
+
+TMP=$(mktemp)
+trap 'rm -f "$TMP" "$TMP.parsed"' EXIT
+
+while true; do
+    curl -s "$API/getUpdates?offset=$OFFSET&timeout=25" > "$TMP"
+
+    python3 - "$TMP" > "$TMP.parsed" <<'PYEOF'
+import sys, json
+with open(sys.argv[1]) as f:
+    data = json.load(f)
+for upd in data.get("result", []):
+    uid = upd["update_id"]
+    msg = upd.get("message", {})
+    chat_id = str(msg.get("chat", {}).get("id", ""))
+    text = msg.get("text", "").replace("\n", " ").replace("\t", " ")
+    print(f"{uid}\t{chat_id}\t{text}")
+PYEOF
+
+    while IFS=$'\t' read -r UPD_ID CHAT TEXT; do
+        [ -z "$UPD_ID" ] && continue
+        OFFSET=$((UPD_ID + 1))
+
+        if [ "$CHAT" != "$TG_CHAT" ]; then
+            echo "Игнор: сообщение от чужого chat_id=$CHAT"
+            continue
+        fi
+
+        [ -z "$TEXT" ] && continue
+        case "$TEXT" in
+            /start|/help)
+                send "ℹ Формат: +30 текст | 19:35 2026-09-23 текст | +2h текст -r 2 -i 120"
+                continue
+                ;;
+        esac
+
+        echo "Получено из TG: '$TEXT'"
+        OUTPUT=$(budi $TEXT 2>&1)
+        RC=$?
+
+        if [ "$RC" -eq 0 ]; then
+            send "✅ $OUTPUT"
+            echo "TG→budi: '$TEXT' → $OUTPUT"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') | TG→budi: $TEXT | $OUTPUT" >> "$LOG"
+        else
+            send "❌ Ошибка: $OUTPUT"
+            echo "TG→budi FAIL: '$TEXT' → $OUTPUT"
+            echo "$(date '+%Y-%m-%d %H:%M:%S') | TG→budi FAIL: $TEXT | $OUTPUT" >> "$LOG"
+        fi
+    done < "$TMP.parsed"
+
+    rm -f "$TMP.parsed"
+done
